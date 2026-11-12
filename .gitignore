@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+template/journey/stills/
+template/journey/evidence/
+*.mp4

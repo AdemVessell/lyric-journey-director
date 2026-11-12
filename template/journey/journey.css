@@ -1,0 +1,18 @@
+:root { --ink: #e9e6df; --mute: #8b8a90; --bg: #07070a; --line: #24232a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 28px; }
+.head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.eyebrow { letter-spacing: .28em; font-size: 10px; color: var(--mute); }
+h1 { margin: 4px 0 0; font: 400 28px/1.1 "Didot", "Bodoni 72", Georgia, serif; letter-spacing: .02em; }
+button { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+.screen { position: relative; background: #000; aspect-ratio: 16 / 9; border: 1px solid var(--line); }
+canvas { display: block; width: 100%; height: 100%; }
+#start { position: absolute; inset: 0; margin: auto; width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; background: rgba(0,0,0,.35); }
+#start span { font-size: 34px; } #start small { letter-spacing: .3em; font-size: 9px; }
+.hidden { display: none !important; }
+#loading { position: absolute; left: 16px; bottom: 14px; color: var(--mute); letter-spacing: .12em; font-size: 11px; }
+.transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.transport input { flex: 1; accent-color: #b9b2d6; }
+.foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--mute); font-size: 11px; letter-spacing: .08em; }
+@media (max-width: 640px) { h1 { font-size: 22px; } .foot { flex-direction: column; } }

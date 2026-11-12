@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lyric Journey Director"
+  short_description: "Hand-built 3D lyric journey films, timed and checked word by word"
+  default_prompt: "Use $lyric-journey-director to make a lyric journey film for this song: lock the brief, time it with ElevenLabs forced alignment and Adem's ear, write a treatment for his OK, build each place by hand, pass lj check at every sung onset, then render and verify."

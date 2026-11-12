@@ -1,0 +1,11 @@
+# Python packages for the song analysis and the render check, pinned to the set the
+# skill was proven with (2026-11-12, Apple's /usr/bin/python3 3.9.6). Install with
+#   /usr/bin/python3 -m pip install --user -r requirements.txt
+# then run `scripts/lj doctor`. The timing scripts need only the standard library.
+# Outside Python the skill needs (the doctor checks each):
+#   Node 18 or newer, and Playwright or playwright-core (tested with 1.60 and 1.61);
+#   Google Chrome (tested with 157), driven headless through ANGLE on Metal;
+#   ffmpeg and ffprobe with libass and libx264 (VideoToolbox on macOS is used when present);
+#   the system Didot font (macOS), which the words are set in.
+numpy==2.0.2
+soundfile==0.13.1

@@ -1,0 +1,126 @@
+#!/bin/bash
+# lj — the lyric-journey workflow from any folder or agent.
+#
+#   lj doctor                                   what this machine has and lacks
+#   lj new DIR --song FILE --lyrics FILE [--title T]   start a project
+#   lj align DIR [--response FILE]              timing from ElevenLabs forced alignment
+#   lj fix DIR                                  re-apply alignment/corrections.json
+#   lj timing-check DIR [--final]               timing.json against the sheet and song
+#   lj earcheck DIR [PROMPTS.json]              the ear-check cut for Adem
+#   lj check DIR                                legibility of every word at its onset
+#   lj stills DIR [TIMES]                       PNG stills (default: one per place)
+#   lj render DIR [--final]                     the MP4 (--final: 40 Mb/s for the grain)
+#   lj verify DIR [MP4]                         decode, sync against the master, SHA
+#   lj play DIR                                 serve the live page (Safari/Chrome)
+#   lj selftest                                 a synthetic song through every step
+#
+# Python: $LJ_PYTHON, then /usr/bin/python3, then python3, the first with numpy and
+# soundfile. Node: $LJ_NODE or node. Playwright and Chrome: see template/journey/pw.mjs.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+skill="$(dirname "$here")"
+node="${LJ_NODE:-node}"
+
+pick_python() {
+  local py
+  for py in "${LJ_PYTHON:-}" /usr/bin/python3 python3; do
+    [ -n "$py" ] && command -v "$py" >/dev/null 2>&1 || continue
+    "$py" -c 'import numpy, soundfile' 2>/dev/null && { echo "$py"; return 0; }
+  done
+  return 1
+}
+py_any() { for py in "${LJ_PYTHON:-}" /usr/bin/python3 python3; do [ -n "$py" ] && command -v "$py" >/dev/null 2>&1 && { echo "$py"; return 0; }; done; return 1; }
+die() { echo "lj: $*" >&2; exit 1; }
+project() { [ -n "${1:-}" ] || die "name the project folder"; [ -d "$1" ] || die "no project at $1"; (cd "$1" && pwd); }
+slug() { basename "$1"; }
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  doctor)
+    ok=1
+    say() { printf '  %-12s %s\n' "$1" "$2"; }
+    if command -v "$node" >/dev/null; then v="$("$node" -p 'process.versions.node')"; say node "$v"; [ "${v%%.*}" -ge 18 ] || { say '' 'NEED node 18 or newer'; ok=0; }; else say node 'MISSING'; ok=0; fi
+    if pw="$("$node" --input-type=module -e "const m = await import('$skill/template/journey/pw.mjs'); const p = await m.loadPlaywright(); console.log(p.from + ' | chrome: ' + (m.chromePath() || 'playwright browser'));" 2>&1)"; then say playwright "$pw"; else say playwright "MISSING — set LJ_PLAYWRIGHT ($(echo "$pw" | tail -1))"; ok=0; fi
+    if command -v ffmpeg >/dev/null; then
+      conf="$(ffmpeg -hide_banner -buildconf 2>/dev/null)"; enc="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
+      have=""; for f in libass libx264; do echo "$conf" | grep -q "enable-$f" && have="$have $f" || { have="$have NO-$f"; ok=0; }; done
+      echo "$enc" | grep -q h264_videotoolbox && have="$have videotoolbox" || have="$have (no videotoolbox: renders use libx264)"
+      say ffmpeg "$(ffmpeg -version | head -1 | awk '{print $3}') ·$have"
+    else say ffmpeg MISSING; ok=0; fi
+    command -v ffprobe >/dev/null && say ffprobe ok || { say ffprobe MISSING; ok=0; }
+    if py="$(pick_python)"; then say python "$py ($("$py" -c 'import sys, numpy, soundfile; print(sys.version.split()[0], "numpy", numpy.__version__, "soundfile", soundfile.__version__)'))"
+    else say python "no python3 with numpy and soundfile: $(py_any || echo none) -m pip install --user numpy soundfile"; ok=0; fi
+    if [ "$(uname)" = Darwin ]; then
+      ls /System/Library/Fonts/Supplemental/Didot.ttc >/dev/null 2>&1 && say font 'Didot (the lyric face)' || say font 'no Didot: the words fall back to Bodoni 72 or Times'
+    else say font 'not macOS: check that Didot or Bodoni is installed, or the words fall back to a serif'; fi
+    if [ -n "${ELEVENLABS_API_KEY:-}" ]; then say elevenlabs 'ELEVENLABS_API_KEY is set (the request itself is not wired yet: scripts/align_elevenlabs.py)'
+    else say elevenlabs 'ELEVENLABS_API_KEY not set; lj align needs --response until the request is wired'; fi
+    say skill "$skill ($(git -C "$skill" rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout'))"
+    [ $ok = 1 ] && echo "doctor: ready" || { echo "doctor: missing pieces above"; exit 1; }
+    ;;
+  new)
+    dir="${1:-}"; shift || true; [ -n "$dir" ] || die "usage: lj new DIR --song FILE --lyrics FILE [--title T]"
+    song=""; lyr=""; title=""
+    while [ $# -gt 0 ]; do case "$1" in
+      --song) song="$2"; shift 2;; --lyrics) lyr="$2"; shift 2;; --title) title="$2"; shift 2;;
+      *) die "unknown option $1";; esac; done
+    [ -f "$song" ] || die "no song at '$song'"; [ -f "$lyr" ] || die "no lyric sheet at '$lyr'"
+    if [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then die "$dir exists and is not empty"; fi
+    py="$(pick_python)" || die "no python3 with numpy and soundfile (lj doctor)"
+    [ -n "$title" ] || { title="$(basename "$song")"; title="${title%.*}"; }
+    mkdir -p "$dir/assets" "$dir/alignment"; dir="$(cd "$dir" && pwd)"
+    case "$(echo "${song##*.}" | tr '[:upper:]' '[:lower:]')" in
+      wav) cp "$song" "$dir/assets/song.wav"; how=copied;;
+      *) ffmpeg -hide_banner -loglevel error -y -i "$song" -vn -c:a pcm_s24le "$dir/assets/song.wav"; how="decoded to 24-bit WAV";;
+    esac
+    cp "$lyr" "$dir/lyrics.txt"
+    (cd "$dir" && "$py" "$here/analyze_bands.py" assets/song.wav assets/drive.json)
+    cp -R "$skill/template/journey" "$dir/journey"
+    TITLE="$title" "$py" - "$dir/journey/index.html" <<'PY'
+import html, os, sys
+p = sys.argv[1]; s = open(p, encoding='utf-8').read()
+open(p, 'w', encoding='utf-8').write(s.replace('{{TITLE}}', html.escape(os.environ['TITLE'])))
+PY
+    TITLE="$title" SONG="$song" LYR="$lyr" HOW="$how" SKILL="$skill" "$py" - "$dir" <<'PY'
+import datetime, hashlib, json, os, subprocess, sys
+d = sys.argv[1]
+def sha(p):
+    h = hashlib.sha256(); f = open(p, 'rb')
+    for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+    return h.hexdigest()
+try: rev = subprocess.run(['git', '-C', os.environ['SKILL'], 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip() or None
+except Exception: rev = None
+json.dump({
+  'title': os.environ['TITLE'],
+  'created_utc': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+  'song': {'source': os.path.abspath(os.environ['SONG']), 'source_sha256': sha(os.environ['SONG']), 'how': os.environ['HOW'], 'wav_sha256': sha(os.path.join(d, 'assets/song.wav'))},
+  'lyrics': {'source': os.path.abspath(os.environ['LYR']), 'sha256': sha(os.path.join(d, 'lyrics.txt'))},
+  'engine': {'skill': 'lyric-journey-director', 'commit': rev},
+}, open(os.path.join(d, 'project.json'), 'w'), indent=1, ensure_ascii=False)
+PY
+    echo "lj: new project $dir (song $how; sheet copied untouched)"
+    echo "next: lj align $dir   then   lj timing-check $dir   then   lj earcheck $dir"
+    ;;
+  align)  d="$(project "${1:-}")"; shift; exec "$(py_any)" "$here/align_elevenlabs.py" "$d" "$@" ;;
+  fix)    d="$(project "${1:-}")"; exec "$(py_any)" "$here/apply_corrections.py" "$d" ;;
+  timing-check) d="$(project "${1:-}")"; shift; exec "$(py_any)" "$here/timing_check.py" "$d" "$@" ;;
+  earcheck)
+    d="$(project "${1:-}")"; prompts="${2:-}"
+    [ -z "$prompts" ] && [ -f "$d/alignment/earcheck_prompts.json" ] && prompts="$d/alignment/earcheck_prompts.json"
+    exec "$(py_any)" "$here/earcheck.py" "$d/timing.json" "$d/assets/song.wav" "$d/$(slug "$d")-timing-check.mp4" ${prompts:+"$prompts"} ;;
+  check)  d="$(project "${1:-}")"; shift; cd "$d/journey" && exec "$node" check_journey.mjs "$@" ;;
+  stills)
+    d="$(project "${1:-}")"; cd "$d/journey"
+    if [ -n "${2:-}" ]; then TIMES="$2" OUT="${OUT:-$d/journey/stills}" exec "$node" stills_journey.mjs; else OUT="${OUT:-$d/journey/stills}" exec "$node" stills_journey.mjs; fi ;;
+  render)
+    d="$(project "${1:-}")"; [ "${2:-}" = --final ] && export BITRATE="${BITRATE:-40M}"
+    cd "$d/journey" && exec "$node" render_journey.mjs ;;
+  verify) d="$(project "${1:-}")"; shift; py="$(pick_python)" || die "no python3 with numpy and soundfile"; exec "$py" "$here/verify_render.py" "$d" "$@" ;;
+  play)
+    d="$(project "${1:-}")"; port="${PORT:-8765}"
+    echo "lj: http://localhost:$port/journey/index.html   (ctrl-c stops it; ?grit=0 plain, ?debug HUD)"
+    cd "$d" && exec "$(py_any)" -m http.server "$port" --bind 127.0.0.1 ;;
+  selftest) py="$(pick_python)" || die "no python3 with numpy and soundfile (lj doctor)"; exec "$py" "$here/selftest.py" "$@" ;;
+  help|-h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$cmd' (lj help)" ;;
+esac
